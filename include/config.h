@@ -1,0 +1,58 @@
+// N4MI Desktop Instrument Series - Propagation Monitor
+// config.h -- pin assignments and non-secret constants
+//
+// All pin numbers confirmed directly from LilyGO's official
+// Xinyuan-LilyGO/T-Encoder-Pro repository PinOverview table.
+
+#pragma once
+
+// ---------------------------------------------------------------------
+// Display (SH8601 AMOLED, QSPI bus)
+// ---------------------------------------------------------------------
+#define PIN_LCD_SDIO0   11
+#define PIN_LCD_SDIO1   13
+#define PIN_LCD_SDIO2   7
+#define PIN_LCD_SDIO3   14
+#define PIN_LCD_SCLK    12
+#define PIN_LCD_RST     4
+#define PIN_LCD_CS      10
+#define PIN_LCD_VCI_EN  3
+
+#define DISPLAY_WIDTH   390
+#define DISPLAY_HEIGHT  390
+
+// ---------------------------------------------------------------------
+// Touch (CHSC5816, I2C) -- not used in v1
+// ---------------------------------------------------------------------
+#define PIN_TOUCH_RST   8
+#define PIN_TOUCH_INT   9
+#define PIN_TOUCH_SDA   5
+#define PIN_TOUCH_SCL   6
+
+// ---------------------------------------------------------------------
+// Rotary encoder + knob push-button
+// ---------------------------------------------------------------------
+#define PIN_ENCODER_A   1
+#define PIN_ENCODER_B   2
+
+// IMPORTANT: GPIO0 is also the ESP32-S3 boot-mode strap pin.
+// Holding the knob while powering on forces bootloader mode.
+#define PIN_ENCODER_KEY 0
+
+// ---------------------------------------------------------------------
+// Buzzer (not used in v1)
+// ---------------------------------------------------------------------
+#define PIN_BUZZER      17
+
+// ---------------------------------------------------------------------
+// Interaction timing
+// ---------------------------------------------------------------------
+#define IDLE_TIMEOUT_MS      10000
+#define LONG_PRESS_MS        1500
+#define KNOB_RESET_HOLD_MS   3000
+
+// ---------------------------------------------------------------------
+// PropMon service
+// ---------------------------------------------------------------------
+#define PROPMON_DEFAULT_HOST  "192.168.6.29"
+#define PROPMON_DEFAULT_PORT  8076
