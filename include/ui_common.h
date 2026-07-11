@@ -54,6 +54,15 @@ void ui_draw_text_at(const char *text, int16_t cx, int16_t y, uint8_t text_size,
 // Intended for headline-weight text (tier word).
 void ui_draw_centered_text_bold(const char *text, int16_t y, uint8_t text_size, uint16_t color);
 
+// Bold version of ui_draw_text_at -- centers on an arbitrary x (for
+// columns/grids) with the same double-draw bold effect. Added
+// 2026-07-11 after Dan reported the Solar screen's header and stat
+// values were hard to read at a couple feet on the real display's
+// dotted bitmap font -- the same legibility problem the Overview
+// headline solved with bold, just needed here at column positions
+// instead of screen-center.
+void ui_draw_text_at_bold(const char *text, int16_t cx, int16_t y, uint8_t text_size, uint16_t color);
+
 // Draws a small sun glyph (circle + rays) centered at (cx, cy). Size-
 // independent since it's primitive shape drawing, not text.
 void ui_draw_sun_icon(int16_t cx, int16_t cy, uint16_t color);

@@ -1,5 +1,6 @@
 // N4MI Desktop Instrument Series - Propagation Monitor
-// main.cpp -- Phase 2: Overview and Bands screens against mock data
+// main.cpp -- Phase 2: Overview, Bands, Solar, and Alerts screens
+// against mock data -- all four screens in the planned set now exist.
 //
 // USB-CDC note: uses while(!Serial) to wait for monitor connection
 // before printing anything -- required for ESP32-S3 native USB-CDC
@@ -10,14 +11,14 @@
 //                    testing aid, not the final Phase 3+ behavior),
 //                    applies to whichever screen is currently shown
 //   SHORT_PRESS    -- force refresh of the current screen
-//   LONG_PRESS     -- TEMPORARY testing toggle between Overview and
-//                     Bands. NOT the final navigation design -- the
-//                     brief's decided behavior is screen cycling via
-//                     knob rotation once all four screens (Overview,
-//                     Bands, Solar, Alerts) exist. This toggle exists
-//                     only so Bands can be seen on real hardware
-//                     before Solar/Alerts and real navigation are
-//                     built; remove/replace when that happens.
+//   LONG_PRESS     -- TEMPORARY testing cycle through Overview ->
+//                     Bands -> Solar -> Alerts. NOT the final
+//                     navigation design -- the brief's decided
+//                     behavior is screen cycling via knob rotation.
+//                     This exists only so all four screens could be
+//                     seen on real hardware before real navigation
+//                     (knob rotation cycling screens, short/long press
+//                     doing their real Phase 3 jobs) gets built.
 
 #include <Arduino.h>
 #include "config.h"
@@ -26,6 +27,8 @@
 #include "data_client.h"
 #include "screens/screen_overview.h"
 #include "screens/screen_bands.h"
+#include "screens/screen_solar.h"
+#include "screens/screen_alerts.h"
 
 // Set to 1 to compile in the diagnostic Serial output added this session
 // for the lag investigation. Set to 0 (default) to compile it out
@@ -37,18 +40,29 @@
 // actively debugging with a monitor attached.
 #define DEBUG_VERBOSE 0
 
-enum class ActiveScreen { OVERVIEW, BANDS };
+enum class ActiveScreen { OVERVIEW, BANDS, SOLAR, ALERTS };
 
 static PropMonData current_data;
 static uint8_t scenario_index = 0;
 static ActiveScreen active_screen = ActiveScreen::OVERVIEW;
 
+static const char *active_screen_name() {
+    switch (active_screen) {
+        case ActiveScreen::OVERVIEW: return "Overview";
+        case ActiveScreen::BANDS:    return "Bands";
+        case ActiveScreen::SOLAR:    return "Solar";
+        case ActiveScreen::ALERTS:   return "Alerts";
+    }
+    return "?";
+}
+
 static void refresh_and_draw() {
     data_client_get_mock(current_data, scenario_index);
-    if (active_screen == ActiveScreen::OVERVIEW) {
-        screen_overview_draw(current_data);
-    } else {
-        screen_bands_draw(current_data);
+    switch (active_screen) {
+        case ActiveScreen::OVERVIEW: screen_overview_draw(current_data); break;
+        case ActiveScreen::BANDS:    screen_bands_draw(current_data);    break;
+        case ActiveScreen::SOLAR:    screen_solar_draw(current_data);    break;
+        case ActiveScreen::ALERTS:   screen_alerts_draw(current_data);   break;
     }
 }
 
@@ -140,13 +154,14 @@ void loop() {
                 need_redraw = true;
                 break;
             case EncoderEvent::LONG_PRESS:
-                active_screen = (active_screen == ActiveScreen::OVERVIEW)
-                    ? ActiveScreen::BANDS : ActiveScreen::OVERVIEW;
+                active_screen = (active_screen == ActiveScreen::OVERVIEW) ? ActiveScreen::BANDS
+                    : (active_screen == ActiveScreen::BANDS) ? ActiveScreen::SOLAR
+                    : (active_screen == ActiveScreen::SOLAR) ? ActiveScreen::ALERTS
+                    : ActiveScreen::OVERVIEW;
 #if DEBUG_VERBOSE
                 if (Serial) {
-                    Serial.printf("[nav] t=%lu LONG PRESS -- toggled to %s (temporary testing toggle)\n",
-                        (unsigned long)millis(),
-                        active_screen == ActiveScreen::OVERVIEW ? "Overview" : "Bands");
+                    Serial.printf("[nav] t=%lu LONG PRESS -- cycled to %s (temporary testing toggle)\n",
+                        (unsigned long)millis(), active_screen_name());
                 }
 #endif
                 need_redraw = true;
@@ -160,7 +175,7 @@ void loop() {
 #if DEBUG_VERBOSE
         if (Serial) {
             Serial.printf("[mock] t=%lu scenario -> %d (screen=%s)\n", (unsigned long)millis(), scenario_index,
-                active_screen == ActiveScreen::OVERVIEW ? "Overview" : "Bands");
+                active_screen_name());
         }
 #endif
         refresh_and_draw();
