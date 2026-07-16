@@ -28,6 +28,19 @@
 //                             periodic fetch below.
 //   LONG_PRESS               -- toggle into/out of the placeholder
 //                             Config screen (see screen_config.cpp).
+//   RESET_HOLD (continuing    -- overrides the Config visit LONG_PRESS
+//   the same hold past           just triggered, entering a new Setup
+//   KNOB_RESET_HOLD_MS)          screen instead ("hold longer to go
+//                                further"). Setup screen foundation
+//                                only this pass -- no real AP/portal
+//                                yet, see screen_setup.cpp. Known
+//                                limitation: the hold-progress bar
+//                                doesn't yet show a second fill phase
+//                                for the extended hold; it just sits
+//                                full from 1.5s to 3s. Functional
+//                                threshold detection works regardless
+//                                -- the bar's second-phase visual is a
+//                                planned fast-follow, not done here.
 //
 // Also, independent of user interaction: an automatic fetch runs every
 // LIVE_FETCH_INTERVAL_MS (config.h) so the device stays current without
@@ -53,6 +66,7 @@
 #include "screens/screen_solar.h"
 #include "screens/screen_alerts.h"
 #include "screens/screen_config.h"
+#include "screens/screen_setup.h"
 
 // Set to 1 to compile in diagnostic Serial output. Set to 0 (default)
 // to compile it out of the binary entirely. Strongly recommended to
@@ -62,7 +76,7 @@
 // this is a compile-time toggle, not a runtime if(Serial) check.
 #define DEBUG_VERBOSE 0
 
-enum class ActiveScreen { OVERVIEW, BANDS, SOLAR, ALERTS, CONFIG };
+enum class ActiveScreen { OVERVIEW, BANDS, SOLAR, ALERTS, CONFIG, SETUP };
 
 static PropMonData current_data;
 static ActiveScreen active_screen = ActiveScreen::OVERVIEW;
@@ -72,6 +86,12 @@ static ActiveScreen active_screen = ActiveScreen::OVERVIEW;
 // here, rather than jumping to a fixed screen. The separate idle
 // timeout below always returns to Overview specifically.
 static ActiveScreen screen_before_config = ActiveScreen::OVERVIEW;
+
+// Same idea, separate variable, for Setup -- kept distinct from
+// screen_before_config rather than unified into one shared "screen
+// before special mode" variable, to keep this change small and avoid
+// touching the already-working Config logic more than necessary.
+static ActiveScreen screen_before_setup = ActiveScreen::OVERVIEW;
 
 // Updated on every resolved encoder event (rotation, short press, or
 // long press). Drives the 10s idle timeout.
@@ -123,6 +143,7 @@ static const char *active_screen_name() {
         case ActiveScreen::SOLAR:    return "Solar";
         case ActiveScreen::ALERTS:   return "Alerts";
         case ActiveScreen::CONFIG:   return "Config";
+        case ActiveScreen::SETUP:    return "Setup";
     }
     return "?";
 }
@@ -217,6 +238,7 @@ static void draw_active_screen() {
         case ActiveScreen::SOLAR:    screen_solar_draw(current_data);           break;
         case ActiveScreen::ALERTS:   screen_alerts_draw(current_data);          break;
         case ActiveScreen::CONFIG:   screen_config_draw(live_data_ever_fetched); break;
+        case ActiveScreen::SETUP:    screen_setup_draw();                       break;
     }
 }
 
@@ -342,6 +364,8 @@ void loop() {
             case EncoderEvent::ROTATE_CCW: {
                 if (active_screen == ActiveScreen::CONFIG) {
                     active_screen = screen_before_config;
+                } else if (active_screen == ActiveScreen::SETUP) {
+                    active_screen = screen_before_setup;
                 } else {
                     active_screen = (ev == EncoderEvent::ROTATE_CW)
                         ? next_screen(active_screen)
@@ -360,6 +384,8 @@ void loop() {
             case EncoderEvent::LONG_PRESS:
                 if (active_screen == ActiveScreen::CONFIG) {
                     active_screen = screen_before_config;
+                } else if (active_screen == ActiveScreen::SETUP) {
+                    active_screen = screen_before_setup;
                 } else {
                     screen_before_config = active_screen;
                     active_screen = ActiveScreen::CONFIG;
@@ -369,6 +395,30 @@ void loop() {
                     Serial.printf("[nav] t=%lu LONG PRESS -- now on %s\n",
                         (unsigned long)millis(), active_screen_name());
                 }
+#endif
+                need_redraw = true;
+                break;
+            case EncoderEvent::RESET_HOLD:
+                // Continuing the same physical hold past
+                // KNOB_RESET_HOLD_MS overrides whatever LONG_PRESS just
+                // did moments ago for this same hold ("hold longer to
+                // go further"). screen_before_config already holds the
+                // real prior screen from when LONG_PRESS fired, so
+                // reuse it as Setup's own "return to" target -- exiting
+                // Setup should go back to where the hold started, not
+                // bounce through Config.
+                if (active_screen == ActiveScreen::CONFIG) {
+                    screen_before_setup = screen_before_config;
+                    active_screen = ActiveScreen::SETUP;
+                } else if (active_screen != ActiveScreen::SETUP) {
+                    // Defensive fallback -- LONG_PRESS should always
+                    // fire first for the same hold, so this shouldn't
+                    // normally happen.
+                    screen_before_setup = active_screen;
+                    active_screen = ActiveScreen::SETUP;
+                }
+#if DEBUG_VERBOSE
+                if (Serial) Serial.println("[nav] RESET HOLD -- entering Setup");
 #endif
                 need_redraw = true;
                 break;

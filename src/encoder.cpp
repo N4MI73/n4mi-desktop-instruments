@@ -13,8 +13,7 @@
 // fires the instant a pin transitions regardless of what loop() is
 // doing. loop() (via encoder_poll()) just drains a shared counter
 // whenever it gets a chance to run. This decouples "did we count the
-// turn" from "how busy is everything else right now" -- important
-// since Phase 2's real screens will have more to draw, not less.
+// turn" from "how busy is everything else right now".
 //
 // The transition table itself (which combinations of previous+current
 // 2-bit state count as a valid CW/CCW step) is unchanged from the
@@ -23,26 +22,14 @@
 // ADDED Phase 3 (real navigation): encoder_get_hold_ms(), a read-only
 // getter over the existing button_was_pressed / button_press_started_ms
 // state below. Does not change press/release detection or timing in
-// any way -- it just exposes what encoder_poll() already tracks
-// internally, so main.cpp can draw a live hold-progress indicator
-// without needing a discrete SHORT_PRESS/LONG_PRESS event to have
-// fired yet.
+// any way.
 //
-// NOTE (flagged, not yet acted on): Dan reported real-world long-press
-// hold time feeling like ~2.5-3s against a coded 1500ms threshold.
-// There is no debounce on the button read itself (digitalRead(...)==LOW,
-// no minimum-stable-time check) -- unlike rotation, which has the
-// well-tested quadrature transition table above. If the switch contact
-// (or GPIO0 itself, which doubles as the boot-mode strap pin and can be
-// electrically noisier than an ordinary GPIO) reads HIGH for even one
-// encoder_poll() cycle during a real physical hold, button_press_started_ms
-// silently resets to "now" with no visual sign that happened, and the
-// hold has to build back up from zero. The new hold-progress ring
-// (see main.cpp / ui_common.cpp) should make this visible on real
-// hardware -- either it climbs smoothly (pure perception, nothing to
-// fix here) or it visibly stutters/resets mid-hold (confirms this
-// theory, and pinpoints exactly what to debounce). Deliberately not
-// changing this state machine blind without hardware to test against.
+// ADDED (Wi-Fi setup foundation): a second threshold, RESET_HOLD,
+// fired once if the same hold continues past KNOB_RESET_HOLD_MS after
+// LONG_PRESS has already fired for it. Tracked the same way
+// long_press_already_fired is -- a second "already fired" flag reset
+// only when a brand-new press begins. No changes to the existing
+// LONG_PRESS/SHORT_PRESS logic or thresholds.
 
 #include "encoder.h"
 #include "config.h"
@@ -57,14 +44,13 @@ static volatile int32_t encoder_delta_accum = 0;
 static bool button_was_pressed = false;
 static unsigned long button_press_started_ms = 0;
 static bool long_press_already_fired = false;
+static bool reset_hold_already_fired = false;
 
 // IRAM_ATTR: keeps this handler resident in internal RAM rather than
-// flash. Not strictly required yet, but becomes mandatory once Phase
-// 2/3 start writing to NVS (Wi-Fi credentials, PropMon URL) --
-// ESP32 briefly makes flash-resident code unreachable during flash
-// writes, and an interrupt firing during that window would otherwise
-// crash the device. Cheap to add now, would be a confusing bug to
-// chase down later if skipped.
+// flash. Required once NVS writes (Wi-Fi credentials) are in the
+// picture -- ESP32 briefly makes flash-resident code unreachable
+// during flash writes, and an interrupt firing during that window
+// would otherwise crash the device.
 static void IRAM_ATTR encoder_isr() {
     uint8_t a = digitalRead(PIN_ENCODER_A);
     uint8_t b = digitalRead(PIN_ENCODER_B);
@@ -95,24 +81,14 @@ void encoder_init() {
     uint8_t b = digitalRead(PIN_ENCODER_B);
     last_encoded = (a << 1) | b;
 
-    // GPIO1/GPIO2 (PIN_ENCODER_A/B) have no interrupt restrictions on
-    // the ESP32-S3 -- unlike the input-only pins on some older ESP32
-    // variants. Same handler is attached to both pins since the ISR
-    // always re-reads both regardless of which one changed.
     attachInterrupt(digitalPinToInterrupt(PIN_ENCODER_A), encoder_isr, CHANGE);
     attachInterrupt(digitalPinToInterrupt(PIN_ENCODER_B), encoder_isr, CHANGE);
 }
 
 EncoderEvent encoder_poll() {
     // Threshold of 2 (not 4) confirmed correct via real hardware
-    // testing 2026-07-04 -- this encoder produces 2 quadrature
-    // transitions per detent, not the 4 initially assumed.
-    //
-    // Subtracting 2 (rather than zeroing) on trigger preserves any
-    // extra accumulated steps from a fast multi-detent turn, so a
-    // burst of rotation doesn't lose partial progress toward the next
-    // count -- it just gets applied over a couple of extra
-    // encoder_poll() calls instead of being dropped.
+    // testing -- this encoder produces 2 quadrature transitions per
+    // detent, not the 4 initially assumed.
     portENTER_CRITICAL(&encoder_mux);
     int32_t accum = encoder_delta_accum;
     portEXIT_CRITICAL(&encoder_mux);
@@ -137,11 +113,17 @@ EncoderEvent encoder_poll() {
         button_was_pressed = true;
         button_press_started_ms = millis();
         long_press_already_fired = false;
+        reset_hold_already_fired = false;
     } else if (is_pressed && button_was_pressed) {
-        if (!long_press_already_fired &&
-            (millis() - button_press_started_ms) >= LONG_PRESS_MS) {
+        unsigned long held = millis() - button_press_started_ms;
+        if (!long_press_already_fired && held >= LONG_PRESS_MS) {
             long_press_already_fired = true;
             return EncoderEvent::LONG_PRESS;
+        }
+        if (long_press_already_fired && !reset_hold_already_fired &&
+            held >= KNOB_RESET_HOLD_MS) {
+            reset_hold_already_fired = true;
+            return EncoderEvent::RESET_HOLD;
         }
     } else if (!is_pressed && button_was_pressed) {
         button_was_pressed = false;
