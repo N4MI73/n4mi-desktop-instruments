@@ -1,17 +1,15 @@
 // N4MI Desktop Instrument Series - Propagation Monitor
 // screen_setup.h
 //
-// SVG mockup approved by Dan before this file was written. Matches
-// screen_config.h's own honesty precedent: the portal (AP mode, DNS
-// redirect, web server) doesn't exist yet this session, so the status
-// line says so plainly rather than showing "Waiting for connection..."
-// like the mockup did -- that text becomes accurate once the real
-// portal is built.
+// UPDATED (real captive portal): now shows real, live status queried
+// directly from wifi_portal.h -- same pattern screen_config.cpp
+// already uses for WiFi.status()/WiFi.localIP() (query the relevant
+// module directly rather than having main.cpp fetch and pass state
+// in). No parameters needed as a result.
 //
 // Entered via a continued knob hold past KNOB_RESET_HOLD_MS (see
-// encoder.h's RESET_HOLD event) -- "hold longer than the regular
-// long-press to go further". Exited by knob rotation or another
-// long-press, same convention as screen_config.h.
+// encoder.h's RESET_HOLD event). Exited by knob rotation or another
+// long-press -- see main.cpp for that state handling.
 
 #pragma once
 

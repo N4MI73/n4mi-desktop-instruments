@@ -29,18 +29,25 @@
 //   LONG_PRESS               -- toggle into/out of the placeholder
 //                             Config screen (see screen_config.cpp).
 //   RESET_HOLD (continuing    -- overrides the Config visit LONG_PRESS
-//   the same hold past           just triggered, entering a new Setup
-//   KNOB_RESET_HOLD_MS)          screen instead ("hold longer to go
-//                                further"). Setup screen foundation
-//                                only this pass -- no real AP/portal
-//                                yet, see screen_setup.cpp. Known
-//                                limitation: the hold-progress bar
-//                                doesn't yet show a second fill phase
-//                                for the extended hold; it just sits
-//                                full from 1.5s to 3s. Functional
-//                                threshold detection works regardless
-//                                -- the bar's second-phase visual is a
-//                                planned fast-follow, not done here.
+//   the same hold past           just triggered, entering the Wi-Fi
+//   KNOB_RESET_HOLD_MS)          Setup screen instead ("hold longer to
+//                                go further"). Starts the real captive
+//                                portal (see wifi_portal.cpp): an open
+//                                AP, DNS captive-redirect, and a web
+//                                server for scanning/selecting a
+//                                network and entering its password.
+//                                The portal keeps running in the
+//                                background even if you rotate away to
+//                                check other screens -- only a long-
+//                                press while actually looking at Setup
+//                                cancels it, or a 5-minute abandon-
+//                                timeout. Known limitation: the hold-
+//                                progress bar doesn't yet show a second
+//                                fill phase for the extended hold; it
+//                                just sits full from 1.5s to 3s.
+//                                Functional threshold detection works
+//                                regardless -- the bar's second-phase
+//                                visual is a planned fast-follow.
 //
 // Also, independent of user interaction: an automatic fetch runs every
 // LIVE_FETCH_INTERVAL_MS (config.h) so the device stays current without
@@ -60,6 +67,7 @@
 #include "encoder.h"
 #include "data_client.h"
 #include "wifi_client.h"
+#include "wifi_portal.h"
 #include "ui_common.h"
 #include "screens/screen_overview.h"
 #include "screens/screen_bands.h"
@@ -92,6 +100,24 @@ static ActiveScreen screen_before_config = ActiveScreen::OVERVIEW;
 // before special mode" variable, to keep this change small and avoid
 // touching the already-working Config logic more than necessary.
 static ActiveScreen screen_before_setup = ActiveScreen::OVERVIEW;
+
+// ---------------------------------------------------------------------
+// Wi-Fi setup portal state (real portal, added this session)
+// ---------------------------------------------------------------------
+// setup_active tracks whether the portal itself is running,
+// independent of whether the Setup screen is currently being shown --
+// per the design decided once the real portal existed, rotating away
+// to check another screen doesn't stop it; only an explicit cancel
+// (long-press while Setup is showing) or a timeout does.
+static bool setup_active = false;
+static uint32_t setup_started_ms = 0;
+
+// Tracks the brief grace period after a successful connection, before
+// the portal actually tears down -- gives the phone's browser time to
+// receive and render the "Connected!" page (sent over the AP link)
+// before that link goes away.
+static bool setup_success_pending = false;
+static uint32_t setup_success_ms = 0;
 
 // Updated on every resolved encoder event (rotation, short press, or
 // long press). Drives the 10s idle timeout.
@@ -365,6 +391,11 @@ void loop() {
                 if (active_screen == ActiveScreen::CONFIG) {
                     active_screen = screen_before_config;
                 } else if (active_screen == ActiveScreen::SETUP) {
+                    // Deliberately does NOT stop the portal -- it keeps
+                    // running in the background (see setup_active
+                    // comment above). Rotating away just lets you check
+                    // another screen while setup continues; long-press
+                    // (below) is what actually cancels it.
                     active_screen = screen_before_setup;
                 } else {
                     active_screen = (ev == EncoderEvent::ROTATE_CW)
@@ -385,7 +416,15 @@ void loop() {
                 if (active_screen == ActiveScreen::CONFIG) {
                     active_screen = screen_before_config;
                 } else if (active_screen == ActiveScreen::SETUP) {
+                    // Long-press while actually looking at Setup is the
+                    // one gesture that cancels it -- tears down the AP
+                    // rather than leaving it running unattended.
                     active_screen = screen_before_setup;
+                    if (setup_active) {
+                        wifi_portal_stop();
+                        setup_active = false;
+                        setup_success_pending = false;
+                    }
                 } else {
                     screen_before_config = active_screen;
                     active_screen = ActiveScreen::CONFIG;
@@ -398,33 +437,83 @@ void loop() {
 #endif
                 need_redraw = true;
                 break;
-            case EncoderEvent::RESET_HOLD:
+            case EncoderEvent::RESET_HOLD: {
                 // Continuing the same physical hold past
                 // KNOB_RESET_HOLD_MS overrides whatever LONG_PRESS just
                 // did moments ago for this same hold ("hold longer to
                 // go further"). screen_before_config already holds the
                 // real prior screen from when LONG_PRESS fired, so
-                // reuse it as Setup's own "return to" target -- exiting
-                // Setup should go back to where the hold started, not
-                // bounce through Config.
+                // reuse it as Setup's own "return to" target. If Setup
+                // is already active and we're re-entering it after
+                // having rotated away, use the current screen instead
+                // (whatever we're navigating away from right now).
+                bool entering = false;
                 if (active_screen == ActiveScreen::CONFIG) {
                     screen_before_setup = screen_before_config;
                     active_screen = ActiveScreen::SETUP;
+                    entering = true;
                 } else if (active_screen != ActiveScreen::SETUP) {
-                    // Defensive fallback -- LONG_PRESS should always
-                    // fire first for the same hold, so this shouldn't
-                    // normally happen.
                     screen_before_setup = active_screen;
                     active_screen = ActiveScreen::SETUP;
+                    entering = true;
+                }
+                if (entering && !setup_active) {
+                    wifi_portal_start();
+                    setup_active = true;
+                    setup_started_ms = millis();
+                    setup_success_pending = false;
                 }
 #if DEBUG_VERBOSE
                 if (Serial) Serial.println("[nav] RESET HOLD -- entering Setup");
 #endif
                 need_redraw = true;
                 break;
+            }
             default:
                 break;
         }
+    }
+
+    // Wi-Fi setup portal servicing -- must run every loop() pass while
+    // active (services DNS + web server, checks for a completed scan).
+    if (setup_active) {
+        wifi_portal_process();
+    }
+
+    // Setup success handoff -- once the portal reports a completed,
+    // successful connection, wait a brief grace period (so the phone's
+    // browser has time to receive/render the confirmation page over
+    // the still-live AP link) before actually tearing the portal down,
+    // fetching fresh live data, and landing on Overview.
+    if (setup_active && wifi_portal_is_complete()) {
+        if (!setup_success_pending) {
+            setup_success_pending = true;
+            setup_success_ms = millis();
+        } else if ((millis() - setup_success_ms) >= WIFI_SETUP_SUCCESS_GRACE_MS) {
+            wifi_portal_stop();
+            setup_active = false;
+            setup_success_pending = false;
+            active_screen = ActiveScreen::OVERVIEW;
+#if DEBUG_VERBOSE
+            if (Serial) Serial.println("[nav] setup complete -- fetching live data");
+#endif
+            perform_fetch_and_update(true);
+            need_redraw = true;
+        }
+    }
+
+    // Setup abandon-timeout -- if nobody ever completes setup, cancel
+    // and tear down the AP automatically rather than leaving an open,
+    // unauthenticated network running indefinitely.
+    if (setup_active && !setup_success_pending &&
+        (millis() - setup_started_ms) >= WIFI_SETUP_TIMEOUT_MS) {
+#if DEBUG_VERBOSE
+        if (Serial) Serial.println("[nav] setup mode timed out, cancelling");
+#endif
+        wifi_portal_stop();
+        setup_active = false;
+        active_screen = ActiveScreen::OVERVIEW;
+        need_redraw = true;
     }
 
     // Hold-progress bar -- reflects the button's current, still-in-
@@ -452,8 +541,12 @@ void loop() {
 
     // Idle timeout -- any screen other than Overview returns there
     // after IDLE_TIMEOUT_MS with no interaction (rotation or either
-    // press).
-    if (active_screen != ActiveScreen::OVERVIEW &&
+    // press). Suppressed entirely while setup is active -- you might
+    // be mid-typing on your phone for longer than 10s, and the round
+    // display shouldn't yank away from Setup status while that's
+    // happening. Setup has its own separate, much longer abandon-
+    // timeout above instead.
+    if (!setup_active && active_screen != ActiveScreen::OVERVIEW &&
         (millis() - last_interaction_ms) >= IDLE_TIMEOUT_MS) {
 #if DEBUG_VERBOSE
         if (Serial) Serial.println("[nav] idle timeout -- returning to Overview");
@@ -465,12 +558,15 @@ void loop() {
 
     // Automatic periodic fetch -- independent of user interaction, so
     // the device stays current without requiring a manual short press.
-    // Note: wifi_client_connect() (called inside perform_fetch_and_update
-    // if not already connected) blocks up to WIFI_CONNECT_TIMEOUT_MS,
-    // which will freeze the UI for that long if Wi-Fi has dropped --
-    // a known limitation, not yet fixed. Non-blocking reconnect is
-    // real work better suited to the eventual captive-portal pass.
-    if ((millis() - last_fetch_attempt_ms) >= LIVE_FETCH_INTERVAL_MS) {
+    // Skipped entirely while setup is active: wifi_client_connect()
+    // (called from inside perform_fetch_and_update if not already
+    // connected) forces WiFi.mode(WIFI_STA), which would kill the
+    // setup portal's AP interface -- and the phone's connection to it
+    // -- out from under an in-progress setup. Note: wifi_client_connect()
+    // also blocks up to WIFI_CONNECT_TIMEOUT_MS if it does run, which
+    // will freeze the UI for that long if Wi-Fi has dropped -- a known
+    // limitation, not yet fixed.
+    if (!setup_active && (millis() - last_fetch_attempt_ms) >= LIVE_FETCH_INTERVAL_MS) {
         perform_fetch_and_update(false);
         need_redraw = true;
     }

@@ -91,6 +91,29 @@
 #define UI_TICK_INTERVAL_MS       5000
 
 // ---------------------------------------------------------------------
+// Wi-Fi setup portal (added for the real captive-portal build)
+// ---------------------------------------------------------------------
+// Open network (no password) -- standard practice for this kind of
+// setup flow; physical proximity to the device is the real security
+// boundary here, not a password on a network that only exists for a
+// few minutes. Default ESP32 AP IP is 192.168.4.1 -- shown on the
+// Setup screen as a fallback in case a phone's automatic captive-
+// portal popup doesn't trigger.
+#define WIFI_SETUP_AP_NAME        "N4MI-PropMon-Setup"
+#define WIFI_SETUP_AP_IP          "192.168.4.1"
+
+// If setup mode is entered but nobody ever completes it, automatically
+// cancel and tear down the AP after this long, rather than leaving an
+// open, unauthenticated network running indefinitely.
+#define WIFI_SETUP_TIMEOUT_MS     300000  // 5 minutes
+
+// Brief grace period after a successful connection before the portal
+// actually tears down -- gives the phone's browser time to fully
+// receive and render the "Connected!" response (which is sent over
+// the AP link) before that link goes away.
+#define WIFI_SETUP_SUCCESS_GRACE_MS  1500
+
+// ---------------------------------------------------------------------
 // PropMon service
 // ---------------------------------------------------------------------
 #define PROPMON_DEFAULT_HOST  "192.168.6.29"

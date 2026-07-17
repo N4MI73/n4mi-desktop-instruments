@@ -1,19 +1,40 @@
 // N4MI Desktop Instrument Series - Propagation Monitor
 // screen_setup.cpp
 //
-// Matches the SVG mockup Dan approved. AP name and IP are compile-time
-// constants for now, matching where the real portal will actually run
-// once built. Status line is an honest placeholder -- see screen_setup.h.
+// Matches the SVG mockup Dan approved, now wired to real status from
+// wifi_portal.h instead of the "Portal not yet built" placeholder from
+// the foundation-only pass.
 
 #include "screens/screen_setup.h"
 #include "display_driver.h"
 #include "ui_common.h"
+#include "wifi_portal.h"
+#include "config.h"
 
-// Matches the AP name/IP the real portal will use once built --
-// centralized here rather than in config.h since nothing else needs
-// them yet.
-#define WIFI_SETUP_AP_NAME "N4MI-PropMon-Setup"
-#define WIFI_SETUP_AP_IP   "192.168.4.1"
+static const char *status_text(uint16_t &out_color) {
+    switch (wifi_portal_get_status()) {
+        case WifiPortalStatus::SCANNING:
+            out_color = UI_COLOR_FAIR;
+            return "Scanning for networks...";
+        case WifiPortalStatus::WAITING:
+            out_color = UI_COLOR_GOOD;
+            if (wifi_portal_client_count() > 0) {
+                return "Phone connected";
+            }
+            return "Waiting for connection...";
+        case WifiPortalStatus::CONNECTING:
+            out_color = UI_COLOR_FAIR;
+            return "Connecting...";
+        case WifiPortalStatus::CONNECTED:
+            out_color = UI_COLOR_GOOD;
+            return "Connected!";
+        case WifiPortalStatus::FAILED:
+            out_color = UI_COLOR_POOR;
+            return "Failed - retry from phone";
+    }
+    out_color = UI_COLOR_MUTED;
+    return "";
+}
 
 void screen_setup_draw() {
     if (!gfx) return;
@@ -28,8 +49,10 @@ void screen_setup_draw() {
     ui_draw_centered_text("2. OPEN A BROWSER TO:", 172, 2, UI_COLOR_LABEL);
     ui_draw_centered_text_bold(WIFI_SETUP_AP_IP, 198, 2, UI_COLOR_VALUE);
 
+    uint16_t status_color;
+    const char *text = status_text(status_color);
     ui_draw_centered_text("STATUS", 240, 2, UI_COLOR_LABEL);
-    ui_draw_centered_text_bold("Portal not yet built", 260, 2, UI_COLOR_FAIR);
+    ui_draw_centered_text_bold(text, 260, 2, status_color);
 
     ui_draw_centered_text("ROTATE TO EXIT", 358, 2, UI_COLOR_MUTED);
 }
