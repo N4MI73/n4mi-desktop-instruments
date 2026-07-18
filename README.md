@@ -193,6 +193,10 @@ its first consumer.
 
 ---
 
+## Blog Post
+
+This project is also described on my blog, n4mi.tech, in this article [PropMon – a Desktop Propagation Monitor](https://n4mi.tech/propmon-a-desktop-propagation-monitor/)
+
 ## Licensing
 
 Built clean-room, referencing [FlightScnr](https://github.com/yashmulgaonkar/FlightScnr) (CC
